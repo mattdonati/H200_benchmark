@@ -1,0 +1,41 @@
+# Copyright 2022 Google LLC
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#      http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+---
+
+- name: Gather service facts
+  become: true
+  ansible.builtin.service_facts:
+
+- name: Fail if stackdriver agent is not running
+  ansible.builtin.assert:
+    that:
+    - ansible_facts.services["stackdriver-agent"].status == "enabled"
+    - ansible_facts.services["stackdriver-agent"].state == "running"
+
+- name: Check that monitoring dashboard has been created
+  changed_when: false
+  ansible.builtin.command: gcloud monitoring dashboards list --format="get(displayName)"
+  run_once: true
+  delegate_to: localhost
+  register: dashboards
+
+- name: Print dashboard information
+  ansible.builtin.debug:
+    var: dashboards
+
+- name: Fail if the HPC Dashboard hasn't been created
+  ansible.builtin.fail:
+    msg: Failed to create dashboard
+  when: "deployment_name not in dashboards.stdout"

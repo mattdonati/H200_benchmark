@@ -1,0 +1,55 @@
+# Copyright 2022 Google LLC
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#      http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+---
+
+blueprint_name: simple_startup
+
+vars:
+  project_id:  ## Set GCP Project ID Here ##
+  deployment_name: simple-startup
+  region: us-central1
+  zone: us-central1-a
+
+deployment_groups:
+- group: primary
+  modules:
+  - id: network1
+    source: modules/network/pre-existing-vpc
+
+  - id: startup
+    source: modules/scripts/startup-script
+    settings:
+      runners:
+      - type: data
+        source: /tmp/foo.tgz
+        destination: /tmp/foo.tgz
+      - type: shell
+        destination: "decompress.sh"
+        content: |
+          #!/bin/sh
+          echo $2
+          tar zxvf /tmp/$1 -C /
+        args: "foo.tgz 'Expanding the file'"
+
+  - id: instance
+    source: modules/compute/vm-instance
+    use: [network1, startup]
+    settings:
+      machine_type: e2-standard-4
+
+  - id: waiter
+    source: community/modules/scripts/wait-for-startup
+    settings:
+      instance_name: $(instance.name[0])

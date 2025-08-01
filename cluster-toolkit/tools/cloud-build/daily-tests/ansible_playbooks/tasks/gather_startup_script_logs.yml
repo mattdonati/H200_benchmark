@@ -1,0 +1,45 @@
+# Copyright 2023 Google LLC
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#      http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+---
+- name: Assert variables are defined
+  ansible.builtin.assert:
+    that:
+    - gcluster_stderr is defined
+
+# Searches the ghpc stderr for a command that gathers the serial logs from the
+# deployed VM, defaults to an empty string if the command is not found
+- name: Get serial port command
+  failed_when: false
+  ansible.builtin.set_fact:
+    serial_port_cmd: '{{ gcluster_stderr | regex_findall("please run:\s+(.+?\s+--project\s+\S+)", "\\1") | first | default("") }}'
+
+- name: Print serial port command
+  failed_when: false
+  ansible.builtin.debug:
+    msg: '{{ serial_port_cmd }}'
+  when: serial_port_cmd | length >  0
+
+- name: Get Startup Script Logs
+  failed_when: false
+  ansible.builtin.command: "{{ serial_port_cmd }}"
+  register: serial_port_1_output
+  when: serial_port_cmd | length >  0
+
+- name: Log Startup Script Failure
+  changed_when: false
+  failed_when: false
+  ansible.builtin.debug:
+    var: serial_port_1_output | ansible.utils.remove_keys(target=['stdout'])
+  when: serial_port_1_output is defined

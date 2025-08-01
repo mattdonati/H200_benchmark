@@ -1,0 +1,202 @@
+# Copyright 2022 Google LLC
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#      http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+---
+
+- name: "Setup Integration tests for Cluster Toolkit"
+  hosts: localhost
+  tasks:
+  ## Create SSH Keys
+  - name: "Create .ssh folder"
+    ansible.builtin.file:
+      path: "/builder/home/.ssh"
+      state: directory
+      mode: 0700
+  - name: Create SSH Key
+    community.crypto.openssh_keypair:
+      path: "/builder/home/.ssh/id_rsa"
+
+  ## Get builder IP address
+  - name: Get Builder IP
+    register: build_ip
+    changed_when: false
+    args:
+      executable: /bin/bash
+    ansible.builtin.shell: |
+      set -e -o pipefail
+      dig TXT +short o-o.myaddr.l.google.com @ns1.google.com | \
+          awk -F'"' '{print $2}'
+
+  ## Create cluster
+  - name: Create Deployment Directory
+    ansible.builtin.include_tasks:
+      file: tasks/create_deployment_directory.yml
+  - name: Create Infrastructure and test
+    block:
+    - name: Execute gcluster deploy
+      register: deployment
+      changed_when: deployment.changed
+      ansible.builtin.command: ./gcluster deploy {{ deployment_name }} --auto-approve
+      args:
+        chdir: "{{ workspace }}"
+      environment:
+        TF_IN_AUTOMATION: "TRUE"
+    - name: Print instance IDs of VMs
+      ansible.builtin.include_tasks:
+        file: tasks/get_instance_ids.yml
+    - name: Get Access Point public IP address
+      register: access_ip
+      changed_when: false
+      args:
+        chdir: "{{ workspace }}/{{ deployment_name }}/pool"
+        executable: /bin/bash
+      ansible.builtin.shell: |
+        set -e -o pipefail
+        sleep 60
+        gcloud compute instances list --filter="labels.ghpc_deployment={{ deployment_name }} AND labels.ghpc_module=htcondor-access-point" \
+            --format='csv[no-heading](networkInterfaces.accessConfigs[0].natIP)' --limit 1
+    - name: Add Login node as host
+      ansible.builtin.add_host:
+        hostname: "{{ access_ip.stdout }}"
+        groups: [remote_host]
+      when: access_ip.stdout | ansible.utils.ipaddr
+    ## Setup firewall for cloud build
+    - name: Create firewall rule
+      register: fw_result
+      changed_when: fw_result.rc == 0
+      ansible.builtin.command:
+        argv:
+        - gcloud
+        - compute
+        - --project={{ project }}
+        - firewall-rules
+        - create
+        - "{{ deployment_name }}"
+        - --direction=INGRESS
+        - --priority=1000
+        - --network={{ network }}
+        - --action=ALLOW
+        - --rules=tcp:22
+        - --source-ranges={{ build_ip.stdout }}
+    - name: Add SSH Keys to OS Login
+      register: key_result
+      changed_when: key_result.rc == 0
+      ansible.builtin.command:
+        argv:
+        - gcloud
+        - compute
+        - os-login
+        - ssh-keys
+        - add
+        - --ttl
+        - 2h
+        - "--key-file=/builder/home/.ssh/id_rsa.pub"
+    - name: Wait for host tasks
+      ansible.builtin.include_tasks: tasks/wait-for-host.yml
+      vars:
+        host_ip: "{{ access_ip.stdout }}"
+        ansible_ssh_private_key_file: "/builder/home/.ssh/id_rsa"
+    rescue:
+    - name: Delete Firewall Rule
+      register: fw_deleted
+      changed_when: fw_deleted.rc == 0
+      failed_when: false  # keep cleaning up
+      ansible.builtin.command:
+        argv:
+        - gcloud
+        - compute
+        - firewall-rules
+        - delete
+        - "{{ deployment_name }}"
+    - name: Destroy deployment
+      register: gcluster_destroy
+      changed_when: gcluster_destroy.changed
+      ignore_errors: true
+      ansible.builtin.command: ./gcluster destroy {{ deployment_name }} --auto-approve
+      args:
+        chdir: "{{ workspace }}"
+      environment:
+        TF_IN_AUTOMATION: "TRUE"
+    - name: Delete VM Image
+      register: image_deletion
+      changed_when: image_deletion.changed
+      ignore_errors: true
+      ansible.builtin.shell: |
+        set -e -o pipefail
+        gcloud compute images delete --project={{ project }} --quiet $(jq -r '.builds[-1].artifact_id' packer-manifest.json | cut -d ":" -f2)
+      args:
+        chdir: "{{ workspace }}/{{ deployment_name }}/packer/custom-image"
+        executable: /bin/bash
+    - name: Trigger Cloud Build failure (rescue blocks otherwise revert failures)
+      ansible.builtin.fail:
+        msg: "Failed while setting up test infrastructure"
+
+- name: Run Integration Tests
+  hosts: remote_host
+  gather_facts: false  # must wait until host is reachable
+  ignore_unreachable: true  # ensure always block will run even if SSH fails
+  tasks:
+  - name: HTCondor Test Block
+    vars:
+      ansible_ssh_private_key_file: "/builder/home/.ssh/id_rsa"
+    block:
+    - name: Gather facts
+      ansible.builtin.setup:
+    - name: Wait until HTCondor daemon is up
+      # this step presently takes a while due to Docker installation
+      ansible.builtin.wait_for:
+        port: 9618
+        delay: 10
+        timeout: 480
+    - name: Run Integration tests for Cluster Toolkit
+      ansible.builtin.include_tasks: "{{ test }}"
+      vars:
+        access_point: "{{ access_point }}"
+      loop: "{{ post_deploy_tests }}"
+      loop_control:
+        loop_var: test
+    always:
+    - name: Delete Firewall Rule
+      delegate_to: localhost
+      register: fw_deleted
+      changed_when: fw_deleted.rc == 0
+      failed_when: false  # keep cleaning up
+      ansible.builtin.command:
+        argv:
+        - gcloud
+        - compute
+        - firewall-rules
+        - delete
+        - "{{ deployment_name }}"
+    - name: Destroy deployment
+      delegate_to: localhost
+      register: gcluster_destroy
+      changed_when: gcluster_destroy.changed
+      ignore_errors: true
+      ansible.builtin.command: ./gcluster destroy {{ deployment_name }} --auto-approve
+      args:
+        chdir: "{{ workspace }}"
+      environment:
+        TF_IN_AUTOMATION: "TRUE"
+    - name: Delete VM Image
+      delegate_to: localhost
+      register: image_deletion
+      changed_when: image_deletion.changed
+      ignore_errors: true
+      ansible.builtin.shell: |
+        set -e -o pipefail
+        gcloud compute images delete --project={{ project }} --quiet $(jq -r '.builds[-1].artifact_id' packer-manifest.json | cut -d ":" -f2)
+      args:
+        chdir: "{{ workspace }}/{{ deployment_name }}/packer/custom-image"
+        executable: /bin/bash

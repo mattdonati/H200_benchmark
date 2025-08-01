@@ -1,0 +1,31 @@
+Advanced Deployment Instructions
+================================
+
+Packer group was successfully created in directory golden_copy_deployment/zero
+To deploy, run the following commands:
+
+cd golden_copy_deployment/zero/lime
+packer init .
+packer validate .
+packer build .
+cd -
+
+Destroying infrastructure when no longer needed
+===============================================
+
+Automated
+---------
+
+gcluster destroy golden_copy_deployment
+
+Advanced / Manual
+-----------------
+Infrastructure should be destroyed in reverse order of creation:
+
+
+Please browse to the Cloud Console to remove VM images produced by Packer.
+If this file is present, the names of images can be read from it:
+
+golden_copy_deployment/zero/lime/packer-manifest.json
+
+https://console.cloud.google.com/compute/images

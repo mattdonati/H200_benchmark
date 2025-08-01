@@ -1,0 +1,65 @@
+# Copyright 2022 Google LLC
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#      http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+---
+- name: Assert variables are defined
+  ansible.builtin.assert:
+    that:
+    - custom_vars.partitions is defined
+    - custom_vars.mounts is defined
+
+- name: Ensure all partitions are UP
+  # Find all unavailable partitions
+  # `| cat` is needed to ignore rc==1 by grep if no lines were selected.
+  # TODO: Make it "ansible-native" way, options:
+  # *`failed_when: false`
+  # *`failed_when: partitions_down.rc == 2`
+  # *`until: partitions_down.rc == 1`
+  ansible.builtin.shell: sinfo --noheader  --all --format "%P[%a]" | grep -v "\[up\]" | cat
+  register: partitions_down
+  retries: 10
+  delay: 12
+  until: partitions_down.stdout_lines | length == 0
+
+- name: Print partitions down
+  ansible.builtin.debug:
+    var: partitions_down.stdout_lines
+
+- name: Get partition info
+  ansible.builtin.command: sinfo --format='%P' --noheader
+  changed_when: False
+  register: partition_output
+  retries: 10
+  delay: 12
+  until: partition_output.rc == 0
+
+- name: Check partitions exist
+  ansible.builtin.fail:
+    msg: Test Check Partitions failed
+  when: item not in partition_output.stdout
+  loop: "{{ custom_vars.partitions }}"
+
+- name: Test partition mounts, multi-node creation, & placement (when on)
+  register: srun_mounts
+  changed_when: srun_mounts.rc == 0
+  ansible.builtin.command: "srun -N {{ custom_vars.num_slurm_nodes | default(2) }} -p {{ item }} mount"
+  loop: "{{ custom_vars.partitions }}"
+
+- name: Fail if partitions unmounted
+  ansible.builtin.fail: "mount: {{ item[1] }} was not found in {{ item[0].cmd }}"
+  # this is searching for "on /scratch " if local mount is /scratch
+  when: '"on " + item[1] + " "  not in item[0].stdout'
+  loop: "{{ srun_mounts.results | product( custom_vars.mounts ) | list }}"
+  loop_control:
+    label: "{{ item[1] }}"

@@ -1,0 +1,79 @@
+# Copyright 2022 Google LLC
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#      http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+---
+
+blueprint_name: startup_options
+
+vars:
+  project_id:  ## Set GCP Project ID Here ##
+  deployment_name: simple-options
+  region: us-central1
+  zone: us-central1-a
+
+deployment_groups:
+- group: primary
+  modules:
+  - id: network1
+    source: modules/network/pre-existing-vpc
+
+  - id: startup
+    source: modules/scripts/startup-script
+    settings:
+      ansible_virtualenv_path: /usr/local/ghpc
+      runners:
+      - type: data
+        source: /tmp/foo.tgz
+        destination: /tmp/foo.tgz
+      - type: shell
+        destination: "decompress.sh"
+        content: |
+          #!/bin/sh
+          echo $2
+          tar zxvf /tmp/$1 -C /
+        args: "foo.tgz 'Expanding the file'"
+      - type: ansible-local
+        content: "--- {}"
+        destination: empty_tasks.yaml
+
+  - id: instance-explicit-startup
+    source: modules/compute/vm-instance
+    use: [network1]
+    settings:
+      name_prefix: explicit
+      machine_type: e2-standard-4
+      startup_script: $(startup.startup_script)
+
+  - id: instance-no-startup
+    source: modules/compute/vm-instance
+    use: [network1]
+    settings:
+      name_prefix: no-startup
+      machine_type: e2-standard-4
+
+  - id: instance-use-startup
+    source: modules/compute/vm-instance
+    use: [network1, startup]
+    settings:
+      name_prefix: use-startup
+      machine_type: e2-standard-4
+
+  - id: instance-metadata-startup
+    source: modules/compute/vm-instance
+    use: [network1]
+    settings:
+      name_prefix: metadata-startup
+      machine_type: e2-standard-4
+      metadata:
+        startup-script: $(startup.startup_script)

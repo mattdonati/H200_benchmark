@@ -1,0 +1,115 @@
+# Copyright 2022 Google LLC
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#      http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+---
+
+blueprint_name: test_outputs
+
+vars:
+  project_id:  ## Set GCP Project ID Here ##
+  deployment_name: test_outputs
+  region: europe-west4
+  zone: europe-west4-a
+
+deployment_groups:
+- group: primary
+  modules:
+  - id: instance
+    source: modules/compute/vm-instance
+    outputs:
+    - name
+
+  - id: sql
+    source: community/modules/database/slurm-cloudsql-federation
+    use: [vpc]
+    outputs:
+    - cloudsql
+    settings:
+      tier: tier
+      sql_instance_name: name
+
+  - id: filestore
+    source: modules/file-system/filestore
+    use: [vpc]
+    outputs:
+    - network_storage
+    - install_nfs_client
+
+  - id: nfs
+    source: community/modules/file-system/nfs-server
+    outputs:
+    - network_storage
+    - install_nfs_client
+
+  - id: pre-existing-storage
+    source: modules/file-system/pre-existing-network-storage
+    outputs:
+    - network_storage
+    settings:
+      server_ip: '$controller'
+      remote_mount: /home
+      local_mount: /home
+      fs_type: nfs
+
+  - id: pre-existing-vpc
+    source: modules/network/pre-existing-vpc
+    outputs:
+    - network_name
+    - network_self_link
+    - subnetwork
+    - subnetwork_name
+    - subnetwork_self_link
+    - subnetwork_address
+
+  - id: vpc
+    source: modules/network/vpc
+    outputs:
+    - network_name
+    - network_self_link
+    - subnetwork
+    - subnetwork_name
+    - subnetwork_self_link
+    - subnetwork_address
+    - nat_ips
+
+  - id: sa
+    source: community/modules/project/service-account
+    outputs:
+    - key
+    - service_account_email
+    - service_account_iam_email
+    settings:
+      name: hpc-service-acct
+      project_roles:
+      - compute.instanceAdmin.v1
+
+  - id: spack
+    source: community/modules/scripts/spack-setup
+    outputs:
+    - startup_script
+    - controller_startup_script
+
+  - id: startup
+    source: modules/scripts/startup-script
+    outputs:
+    - startup_script
+
+  - id: lustre
+    source: community/modules/file-system/DDN-EXAScaler
+    outputs:
+    - private_addresses
+    - ssh_console
+    - mount_command
+    - http_console
+    - network_storage

@@ -1,0 +1,75 @@
+# Copyright 2022 Google LLC
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#      http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+---
+- name: Get default Python interpreter from update-alternatives
+  ansible.builtin.shell: >
+    update-alternatives --display python3 |
+    grep 'link currently points to' |
+    awk '{print $NF}'
+  register: default_python
+  changed_when: false
+
+- name: Set default Python interpreter for Ansible
+  ansible.builtin.set_fact:
+    ansible_python_interpreter: "{{ default_python.stdout }}"
+
+- name: Verify Python interpreter
+  ansible.builtin.command: "{{ ansible_python_interpreter }} --version"
+  register: python_version
+
+- name: Display Python version
+  ansible.builtin.debug:
+    msg: "The Python interpreter version is: {{ python_version.stdout }}"
+
+# Can't use the pip action here because we need to explicitly enable
+# a modern gcc from the dev_env role
+- name: Install FE C&C Dependencies
+  ansible.builtin.pip:
+    name:
+    - requests
+    - pexpect
+    - google-cloud-storage
+    - google-cloud-pubsub
+    - addict
+    - google-api-python-client
+    - google-cloud-secret-manager
+    - prometheus_client
+    state: present
+
+- name: Install FE C&C Daemon
+  ansible.builtin.copy:
+    src: ghpcfe_c2daemon.py
+    dest: /usr/local/sbin/ghpcfe_c2daemon.py
+    mode: 0755
+
+- name: Install FE C&C Daemon Config
+  ansible.builtin.template:
+    src: ghpcfe_c2.yaml.j2
+    dest: /usr/local/etc/ghpcfe_c2.yaml
+    mode: 0755
+
+- name: Install FE C&C service file
+  ansible.builtin.copy:
+    src: ghpcfe_c2.service
+    dest: /etc/systemd/system/ghpcfe_c2.service
+    mode: 0644
+
+- name: Start FE C&C Daemon
+  ansible.builtin.systemd:
+    daemon_reload: True
+    state: started
+    name: ghpcfe_c2
+    enabled: True
+    masked: False

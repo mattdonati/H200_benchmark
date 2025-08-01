@@ -1,0 +1,85 @@
+# Copyright 2022 Google LLC
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#      http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+---
+
+blueprint_name: blueprint-monitoring
+
+vars:
+  project_id:  ## Set GCP Project ID Here ##
+  deployment_name: monitoring
+  region: us-central1
+  zone: us-central1-c
+  add_deployment_name_before_prefix: true
+  machine_type: c2-standard-4
+
+deployment_groups:
+- group: primary
+  modules:
+  - id: network
+    source: modules/network/vpc
+
+  - id: homefs
+    source: community/modules/file-system/nfs-server
+    use: [network]
+    settings:
+      local_mounts: [/home]
+
+  - id: bucket-for-startup-script
+    source: community/modules/file-system/cloud-storage-bucket
+
+  - id: startup-ops
+    source: modules/scripts/startup-script
+    use: [bucket-for-startup-script]
+    settings:
+      install_cloud_ops_agent: true
+
+  - id: workstation-ops
+    source: modules/compute/vm-instance
+    use:
+    - network
+    - homefs
+    - startup-ops
+    settings:
+      name_prefix: workstation-ops
+
+  - id: startup-stack
+    source: modules/scripts/startup-script
+    use: [bucket-for-startup-script]
+    settings:
+      install_stackdriver_agent: true
+
+  - id: workstation-stack
+    source: modules/compute/vm-instance
+    use:
+    - network
+    - homefs
+    - startup-stack
+    settings:
+      name_prefix: workstation-stackdriver
+
+  - id: wait0
+    source: community/modules/scripts/wait-for-startup
+    settings:
+      instance_name: $(workstation-ops.name[0])
+
+  - id: wait1
+    source: community/modules/scripts/wait-for-startup
+    settings:
+      instance_name: $(workstation-stack.name[0])
+
+  - id: hpc-dash
+    source: modules/monitoring/dashboard
+    settings:
+      title: $(vars.deployment_name)
